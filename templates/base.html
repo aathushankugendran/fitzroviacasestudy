@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{% block title %}Fitzrovia Intelligence{% endblock %}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&family=Playfair+Display:wght@600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --navy: #111111;
+  --navy-mid: #1a1a1a;
+  --navy-light: #222222;
+  --gold: #d84028;
+  --gold-light: #e8614d;
+  --slate: #888888;
+  --slate-light: #aaaaaa;
+  --bg: #F5F5F5;
+  --white: #FFFFFF;
+  --border: #E0E0E0;
+  --green: #2ECC71;
+  --red: #d84028;
+  --amber: #d84028;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: 'DM Sans', sans-serif;
+  background: var(--bg);
+  color: var(--navy);
+  min-height: 100vh;
+}
+/* SIDEBAR */
+.sidebar {
+  position: fixed; top: 0; left: 0; width: 220px; height: 100vh;
+  background: var(--navy); display: flex; flex-direction: column;
+  z-index: 100; padding: 0;
+}
+.sidebar-logo {
+  padding: 28px 24px 20px;
+  border-bottom: 1px solid rgba(201,168,76,0.2);
+}
+.sidebar-logo .wordmark {
+  font-family: 'Playfair Display', serif;
+  font-size: 18px; color: var(--white); letter-spacing: 0.03em;
+}
+.sidebar-logo .sub {
+  font-size: 10px; color: var(--gold); letter-spacing: 0.12em;
+  text-transform: uppercase; margin-top: 3px;
+}
+.sidebar-nav { flex: 1; padding: 20px 0; }
+.sidebar-nav a {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 24px; color: var(--slate-light); text-decoration: none;
+  font-size: 13.5px; font-weight: 500; transition: all 0.15s; border-left: 3px solid transparent;
+}
+.sidebar-nav a:hover, .sidebar-nav a.active {
+  color: var(--white); background: rgba(255,255,255,0.05); border-left-color: var(--gold);
+}
+.sidebar-nav a svg { opacity: 0.7; flex-shrink: 0; }
+.sidebar-nav a:hover svg, .sidebar-nav a.active svg { opacity: 1; }
+.sidebar-footer {
+  padding: 16px 24px;
+  border-top: 1px solid rgba(255,255,255,0.08);
+  font-size: 12px; color: var(--slate);
+}
+.sidebar-footer a { color: var(--slate); text-decoration: none; }
+.sidebar-footer a:hover { color: var(--white); }
+
+/* MAIN */
+.main {
+  margin-left: 220px;
+  min-height: 100vh;
+  display: flex; flex-direction: column;
+}
+.topbar {
+  height: 60px; background: var(--white);
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 32px; position: sticky; top: 0; z-index: 50;
+}
+.topbar-title { font-size: 15px; font-weight: 600; color: var(--navy); }
+.topbar-actions { display: flex; align-items: center; gap: 12px; }
+.content { padding: 28px 32px; flex: 1; }
+
+/* BUTTONS */
+.btn {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 9px 18px; border-radius: 6px; font-size: 13.5px; font-weight: 500;
+  cursor: pointer; text-decoration: none; border: none; transition: all 0.15s;
+  font-family: 'DM Sans', sans-serif;
+}
+.btn-primary { background: var(--navy); color: var(--white); }
+.btn-primary:hover { background: var(--navy-light); }
+.btn-gold { background: var(--gold); color: var(--navy); }
+.btn-gold:hover { background: var(--gold-light); }
+.btn-outline { background: transparent; color: var(--navy); border: 1.5px solid var(--border); }
+.btn-outline:hover { border-color: var(--navy); background: var(--bg); }
+.btn-sm { padding: 6px 12px; font-size: 12.5px; }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* CARDS */
+.card {
+  background: var(--white); border: 1px solid var(--border);
+  border-radius: 10px; overflow: hidden;
+}
+.card-header {
+  padding: 16px 20px; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: space-between;
+}
+.card-title { font-size: 13px; font-weight: 600; color: var(--navy); text-transform: uppercase; letter-spacing: 0.06em; }
+.card-body { padding: 20px; }
+
+/* STAT CARDS */
+.stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 14px; margin-bottom: 24px; }
+.stat-card {
+  background: var(--white); border: 1px solid var(--border);
+  border-radius: 10px; padding: 18px 20px;
+}
+.stat-label { font-size: 11px; color: var(--slate); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 8px; }
+.stat-value { font-family: 'DM Mono', monospace; font-size: 26px; font-weight: 500; color: var(--navy); }
+.stat-value.gold { color: var(--gold); }
+.stat-sub { font-size: 12px; color: var(--slate); margin-top: 4px; }
+
+/* BADGES */
+.badge {
+  display: inline-flex; align-items: center; padding: 2px 8px;
+  border-radius: 4px; font-size: 11px; font-weight: 600; letter-spacing: 0.02em;
+}
+.badge-green { background: #EDFAF2; color: #1B8C4E; }
+.badge-amber { background: #FFF8EC; color: #A0620A; }
+.badge-red { background: #FDECEA; color: #B91C1C; }
+.badge-navy { background: var(--navy); color: var(--white); }
+.badge-grey { background: var(--bg); color: var(--slate); }
+
+/* TABLE */
+.data-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+.data-table th {
+  text-align: left; padding: 10px 14px;
+  font-size: 11px; font-weight: 600; color: var(--slate);
+  text-transform: uppercase; letter-spacing: 0.07em;
+  background: var(--bg); border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.data-table td { padding: 11px 14px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.data-table tr:last-child td { border-bottom: none; }
+.data-table tr:hover td { background: #FAFBFC; }
+.mono { font-family: 'DM Mono', monospace; font-size: 13px; }
+.rent-value { font-family: 'DM Mono', monospace; font-weight: 500; color: var(--navy); }
+
+/* FILTERS */
+.filter-bar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 20px; }
+.filter-pill {
+  padding: 6px 14px; border-radius: 20px; font-size: 13px; font-weight: 500;
+  cursor: pointer; text-decoration: none; border: 1.5px solid var(--border);
+  color: var(--slate); background: var(--white); transition: all 0.15s;
+}
+.filter-pill:hover { border-color: var(--navy); color: var(--navy); }
+.filter-pill.active { background: var(--navy); color: var(--white); border-color: var(--navy); }
+
+/* ALERTS */
+.alert {
+  padding: 12px 16px; border-radius: 8px; font-size: 13.5px;
+  display: flex; align-items: center; gap: 10px; margin-bottom: 16px;
+}
+.alert-info { background: #EFF6FF; color: #1D4ED8; border: 1px solid #BFDBFE; }
+.alert-success { background: #ECFDF5; color: #065F46; border: 1px solid #A7F3D0; }
+
+/* SCRAPE STATUS */
+.scrape-indicator {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12.5px; color: var(--slate); font-weight: 500;
+}
+.pulse-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--green); animation: pulse 1.5s infinite;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.85); }
+}
+
+/* BUILDING GRID */
+.building-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
+.building-card {
+  background: var(--white); border: 1px solid var(--border);
+  border-radius: 10px; padding: 20px; text-decoration: none; color: inherit;
+  transition: all 0.18s; display: block;
+}
+.building-card:hover { border-color: var(--navy); box-shadow: 0 4px 16px rgba(13,27,42,0.08); transform: translateY(-1px); }
+.building-card.empty { opacity: 0.65; }
+.bcard-name { font-size: 15px; font-weight: 600; color: var(--navy); margin-bottom: 4px; }
+.bcard-addr { font-size: 12px; color: var(--slate); margin-bottom: 14px; }
+.bcard-stats { display: flex; gap: 16px; margin-bottom: 12px; }
+.bcard-stat { text-align: center; }
+.bcard-stat-val { font-family: 'DM Mono', monospace; font-size: 18px; font-weight: 500; color: var(--navy); }
+.bcard-stat-label { font-size: 10.5px; color: var(--slate); text-transform: uppercase; letter-spacing: 0.06em; }
+.bcard-rent { font-family: 'DM Mono', monospace; font-size: 12.5px; color: var(--slate); }
+.bcard-incentive {
+  font-size: 11.5px; color: #7C5C00; background: #FFF8E1;
+  border: 1px solid #FDEBBF; border-radius: 4px; padding: 4px 8px;
+  margin-top: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.bcard-status { display: flex; align-items: center; justify-content: space-between; margin-top: 12px; }
+.bcard-time { font-size: 11px; color: var(--slate); }
+
+/* SECTION HEADER */
+.section-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 16px;
+}
+.section-title { font-size: 15px; font-weight: 600; color: var(--navy); }
+.section-count { font-size: 12px; color: var(--slate); margin-left: 8px; }
+
+/* DIVIDER */
+.divider { height: 1px; background: var(--border); margin: 24px 0; }
+
+/* EMPTY STATE */
+.empty-state {
+  text-align: center; padding: 60px 20px; color: var(--slate);
+}
+.empty-state-icon { font-size: 40px; margin-bottom: 12px; opacity: 0.4; }
+.empty-state-title { font-size: 16px; font-weight: 600; color: var(--navy); margin-bottom: 6px; }
+.empty-state-desc { font-size: 13.5px; }
+</style>
+{% block extra_head %}{% endblock %}
+</head>
+<body>
+{% if user is defined %}
+<nav class="sidebar">
+  <div class="sidebar-logo">
+    <div class="wordmark">Fitzrovia</div>
+    <div class="sub">Rental Intelligence</div>
+  </div>
+  <div class="sidebar-nav">
+    <a href="/" class="{% if request.url.path == '/' %}active{% endif %}">
+      <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
+      Dashboard
+    </a>
+    <a href="/?unit_type=Bachelor">
+      <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
+      Bachelor Units
+    </a>
+    <a href="/?unit_type=1-Bed">
+      <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
+      1-Bed Units
+    </a>
+    <a href="/?unit_type=2-Bed">
+      <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/></svg>
+      2-Bed Units
+    </a>
+    <a href="/?unit_type=3-Bed">
+      <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 14v3m4-3v3m4-3v3M3 21h18M3 10h18M3 7l9-4 9 4M4 10h16v11H4V10z"/></svg>
+      3-Bed Units
+    </a>
+    <div style="height:1px;background:rgba(255,255,255,0.07);margin:12px 24px;"></div>
+    <a href="/export/pdf">
+      <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+      Export PDF
+    </a>
+  </div>
+  <div class="sidebar-footer">
+    Signed in as <strong style="color:var(--white)">{{ user }}</strong><br>
+    <a href="/logout">Sign out</a>
+  </div>
+</nav>
+{% endif %}
+<div class="main">
+  {% block content %}{% endblock %}
+</div>
+{% block scripts %}{% endblock %}
+</body>
+</html>
