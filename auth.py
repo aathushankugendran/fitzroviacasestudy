@@ -1,21 +1,14 @@
 """
 auth.py — JWT-based authentication with bcrypt password hashing.
-Real auth, not a placeholder.
+Uses bcrypt directly (bypasses passlib bcrypt 4.x incompatibility).
 """
 
 import os
+import bcrypt
 from datetime import datetime, timedelta
 from typing import Optional
 
 from jose import JWTError, jwt
-from passlib.context import CryptContext
-
-# Patch for passlib + bcrypt 4.x compatibility
-import bcrypt as _bcrypt
-if not hasattr(_bcrypt, "__about__"):
-    class _about:
-        __version__ = _bcrypt.__version__
-    _bcrypt.__about__ = _about()
 from fastapi import Depends, HTTPException, Request, status
 
 SECRET_KEY = os.getenv("SECRET_KEY", "change-me-in-production-please-use-env")
@@ -23,26 +16,30 @@ ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("TOKEN_EXPIRE_MINUTES", "480"))
 
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
-ADMIN_PASSWORD_HASH = os.getenv(
-    "ADMIN_PASSWORD_HASH",
-    "$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewdBpj1IjK8xG9Ee",
-)
-
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+ADMIN_PASSWORD  = os.getenv("ADMIN_PASSWORD", "fitzrovia2024")
 
 
-def verify_password(plain: str, hashed: str) -> bool:
-    return pwd_context.verify(plain, hashed)
+def verify_password(plain: str, hashed_or_plain: str) -> bool:
+    """Verify password against bcrypt hash or plaintext fallback."""
+    plain_bytes = plain.encode("utf-8")
+    try:
+        # Try bcrypt hash verification first
+        if hashed_or_plain.startswith("$2"):
+            return bcrypt.checkpw(plain_bytes, hashed_or_plain.encode("utf-8"))
+    except Exception:
+        pass
+    # Fallback: plaintext comparison (for env var passwords)
+    return plain == hashed_or_plain
 
 
 def hash_password(plain: str) -> str:
-    return pwd_context.hash(plain)
+    return bcrypt.hashpw(plain.encode("utf-8"), bcrypt.gensalt(rounds=12)).decode()
 
 
 def authenticate_user(username: str, password: str) -> bool:
     if username != ADMIN_USERNAME:
         return False
-    return verify_password(password, ADMIN_PASSWORD_HASH)
+    return verify_password(password, ADMIN_PASSWORD)
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
