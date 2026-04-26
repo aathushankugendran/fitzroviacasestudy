@@ -6,8 +6,8 @@ __pycache__/
 .DS_Store
 .env
 .env.*
-*.db
-*.sqlite3
+
+
 # Python
 __pycache__/
 *.py[cod]
@@ -32,10 +32,10 @@ env/
 secrets.py
 
 # Database (local dev only — use a proper DB in prod)
-*.db
-*.sqlite
-*.sqlite3
-fitzrovia.db
+
+
+
+
 
 # Playwright
 .playwright/
