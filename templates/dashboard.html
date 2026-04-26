@@ -1,0 +1,262 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — Fitzrovia Intelligence{% endblock %}
+
+{% block content %}
+<div class="topbar">
+  <div class="topbar-title">
+    {% if unit_type %}{{ unit_type }} Units{% else %}Market Dashboard{% endif %}
+  </div>
+  <div class="topbar-actions">
+    <div class="scrape-indicator" id="scrape-status">
+      {% if scrape_running %}
+      <div class="pulse-dot"></div>
+      <span>Scraping in progress…</span>
+      {% elif last_run and last_run.completed_at %}
+      <span style="color:var(--slate)">Updated {{ last_run.completed_at | et('%b %d, %H:%M ET') }}</span>
+      {% else %}
+      <span style="color:var(--slate)">No scrape yet</span>
+      {% endif %}
+    </div>
+    <a href="/export/pdf" class="btn btn-outline btn-sm">
+      <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3M3 17v3a1 1 0 001 1h16a1 1 0 001-1v-3"/></svg>
+      Export PDF
+    </a>
+    <button class="btn btn-primary btn-sm" id="scrape-btn" onclick="triggerScrape()" {% if scrape_running %}disabled{% endif %}>
+      <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+      {% if scrape_running %}Scraping…{% else %}Refresh Data{% endif %}
+    </button>
+  </div>
+</div>
+
+<div class="content">
+  {% if scrape_running %}
+  <div class="alert alert-info" id="scrape-alert">
+    <div class="pulse-dot"></div>
+    Scraping all 10 buildings — this takes 2–4 minutes. The page will auto-refresh when complete.
+  </div>
+  {% endif %}
+
+  <!-- STAT ROW -->
+  <div class="stat-grid">
+    <div class="stat-card">
+      <div class="stat-label">Total Units</div>
+      <div class="stat-value">{{ total_units }}</div>
+      <div class="stat-sub">across all buildings</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Bachelor</div>
+      <div class="stat-value">{{ type_counts.get('Bachelor', 0) }}</div>
+      <div class="stat-sub">units available</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">1-Bed</div>
+      <div class="stat-value">{{ type_counts.get('1-Bed', 0) }}</div>
+      <div class="stat-sub">units available</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">2-Bed</div>
+      <div class="stat-value">{{ type_counts.get('2-Bed', 0) }}</div>
+      <div class="stat-sub">units available</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">3-Bed</div>
+      <div class="stat-value">{{ type_counts.get('3-Bed', 0) }}</div>
+      <div class="stat-sub">units available</div>
+    </div>
+    {% if units %}
+    {% set rents = units | selectattr('monthly_rent') | map(attribute='monthly_rent') | list %}
+    {% if rents %}
+    <div class="stat-card">
+      <div class="stat-label">Market Low</div>
+      <div class="stat-value gold">${{ '{:,.0f}'.format(rents | min) }}</div>
+      <div class="stat-sub">lowest listed rent</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Market High</div>
+      <div class="stat-value">${{ '{:,.0f}'.format(rents | max) }}</div>
+      <div class="stat-sub">highest listed rent</div>
+    </div>
+    {% endif %}
+    {% endif %}
+  </div>
+
+  <!-- FILTER PILLS -->
+  <div class="filter-bar">
+    <a href="/" class="filter-pill {% if not unit_type %}active{% endif %}">All Types</a>
+    {% for ut in ['Bachelor', '1-Bed', '2-Bed', '3-Bed'] %}
+    <a href="/?unit_type={{ ut }}" class="filter-pill {% if unit_type == ut %}active{% endif %}">
+      {{ ut }} <span style="opacity:0.6;margin-left:4px">{{ type_counts.get(ut, 0) }}</span>
+    </a>
+    {% endfor %}
+  </div>
+
+  <!-- BUILDINGS OVERVIEW (only on all-types view) -->
+  {% if not unit_type %}
+  <div class="section-header">
+    <span class="section-title">Buildings <span class="section-count">{{ buildings | length }}</span></span>
+    <span style="font-size:12px;color:var(--slate)">Click any building for unit-level detail</span>
+  </div>
+  <div class="building-grid" style="margin-bottom:28px">
+    {% for b in buildings %}
+    <a href="/buildings/{{ b.id }}" class="building-card {% if b.unit_count == 0 %}empty{% endif %}">
+      <div class="bcard-name">{{ b.name }}</div>
+      <div class="bcard-addr">{{ b.address }}</div>
+      <div class="bcard-stats">
+        <div class="bcard-stat">
+          <div class="bcard-stat-val">{{ b.unit_count }}</div>
+          <div class="bcard-stat-label">Units</div>
+        </div>
+        <div class="bcard-stat">
+          <div class="bcard-stat-val">{{ b.bachelor_count }}</div>
+          <div class="bcard-stat-label">Bach</div>
+        </div>
+        <div class="bcard-stat">
+          <div class="bcard-stat-val">{{ b.one_bed_count }}</div>
+          <div class="bcard-stat-label">1-Bed</div>
+        </div>
+        <div class="bcard-stat">
+          <div class="bcard-stat-val">{{ b.two_bed_count }}</div>
+          <div class="bcard-stat-label">2-Bed</div>
+        </div>
+        <div class="bcard-stat">
+          <div class="bcard-stat-val">{{ b.three_bed_count }}</div>
+          <div class="bcard-stat-label">3-Bed</div>
+        </div>
+      </div>
+      {% if b.min_rent or b.max_rent %}
+      <div class="bcard-rent">
+        ${{ '{:,.0f}'.format(b.min_rent) if b.min_rent else '—' }}
+        {% if b.max_rent and b.max_rent != b.min_rent %} – ${{ '{:,.0f}'.format(b.max_rent) }}{% endif %}
+        /mo
+      </div>
+      {% endif %}
+      {% if b.incentives %}
+      <div class="bcard-incentive">🎁 {{ b.incentives[:60] }}{% if b.incentives|length > 60 %}…{% endif %}</div>
+      {% endif %}
+      <div class="bcard-status">
+        {% if b.scrape_status == 'success' %}
+        <span class="badge badge-green">✓ Data loaded</span>
+        {% elif b.scrape_status == 'empty' %}
+        <span class="badge badge-amber">No units found</span>
+        {% else %}
+        <span class="badge badge-grey">Not scraped</span>
+        {% endif %}
+        <span class="bcard-time">
+          {% if b.last_scraped_at %}{{ b.last_scraped_at | et }}{% else %}—{% endif %}
+        </span>
+      </div>
+    </a>
+    {% endfor %}
+  </div>
+  <div class="divider"></div>
+  {% endif %}
+
+  <!-- UNITS TABLE -->
+  <div class="section-header">
+    <span class="section-title">
+      {% if unit_type %}{{ unit_type }} Listings{% else %}All Listings{% endif %}
+      <span class="section-count">{{ units | length }}</span>
+    </span>
+  </div>
+
+  {% if units %}
+  <div class="card">
+    <div style="overflow-x:auto">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Building</th>
+            <th>Type</th>
+            <th>Floor Plan</th>
+            <th>Unit #</th>
+            <th>Sq Ft</th>
+            <th>Monthly Rent</th>
+            <th>Available</th>
+            <th>Incentives</th>
+            <th>Scraped</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for u in units %}
+          <tr>
+            <td>
+              <a href="/buildings/{{ u.building_id }}" style="color:var(--navy);font-weight:600;text-decoration:none">
+                {{ u.building_name }}
+              </a>
+            </td>
+            <td>
+              <span class="badge
+                {% if u.unit_type == 'Bachelor' %}badge-navy
+                {% elif u.unit_type == '1-Bed' %}badge-green
+                {% elif u.unit_type == '2-Bed' %}badge-amber
+                {% else %}badge-grey{% endif %}
+              ">{{ u.unit_type }}</span>
+            </td>
+            <td style="color:var(--slate);font-size:13px">{{ u.floor_plan_name or '—' }}</td>
+            <td class="mono" style="color:var(--slate)">{{ u.unit_number or '—' }}</td>
+            <td class="mono">{{ u.sq_ft or '—' }}</td>
+            <td class="rent-value">
+              {% if u.monthly_rent %}${{ '{:,.0f}'.format(u.monthly_rent) }}{% else %}—{% endif %}
+            </td>
+            <td style="font-size:13px">{{ u.available_date or 'Now' }}</td>
+            <td style="font-size:12px;color:#8B2010;max-width:200px">
+              {% if u.incentives %}
+              <span title="{{ u.incentives }}">{{ u.incentives[:50] }}{% if u.incentives|length > 50 %}…{% endif %}</span>
+              {% else %}—{% endif %}
+            </td>
+            <td style="font-size:12px;color:var(--slate)">
+              {% if u.scraped_at %}{{ u.scraped_at | et('%b %d') }}{% else %}—{% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% else %}
+  <div class="empty-state">
+    <div class="empty-state-icon">🏢</div>
+    <div class="empty-state-title">No data yet</div>
+    <div class="empty-state-desc">Click <strong>Refresh Data</strong> above to run the scraper and pull the latest rental listings.</div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function triggerScrape() {
+  const btn = document.getElementById('scrape-btn');
+  btn.disabled = true;
+  btn.textContent = 'Starting…';
+  try {
+    const res = await fetch('/scrape', { method: 'POST' });
+    const data = await res.json();
+    if (data.status === 'started' || data.status === 'already_running') {
+      btn.textContent = 'Scraping…';
+      pollScrapeStatus();
+    }
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = 'Refresh Data';
+  }
+}
+
+function pollScrapeStatus() {
+  const interval = setInterval(async () => {
+    try {
+      const res = await fetch('/scrape/status');
+      const data = await res.json();
+      if (!data.running) {
+        clearInterval(interval);
+        window.location.reload();
+      }
+    } catch (e) {}
+  }, 4000);
+}
+
+{% if scrape_running %}
+pollScrapeStatus();
+{% endif %}
+</script>
+{% endblock %}
