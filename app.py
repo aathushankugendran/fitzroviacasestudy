@@ -14,6 +14,7 @@ Routes:
 
 import asyncio
 import json
+import os
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -46,6 +47,8 @@ from auth import (
 from pdf_export import generate_rental_report
 
 app = FastAPI(title="Fitzrovia Rental Intelligence")
+# Ensure static directory exists in deploy environments where empty folders are not checked in.
+os.makedirs("static", exist_ok=True)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
