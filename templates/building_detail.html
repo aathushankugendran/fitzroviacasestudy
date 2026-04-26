@@ -1,0 +1,174 @@
+{% extends "base.html" %}
+{% block title %}{{ building.name }} — Fitzrovia Intelligence{% endblock %}
+
+{% block content %}
+<div class="topbar">
+  <div style="display:flex;align-items:center;gap:12px">
+    <a href="/" style="color:var(--slate);text-decoration:none;font-size:13px">← Dashboard</a>
+    <span style="color:var(--border)">|</span>
+    <div class="topbar-title">{{ building.name }}</div>
+  </div>
+  <div class="topbar-actions">
+    <a href="{{ building.url }}" target="_blank" rel="noopener" class="btn btn-outline btn-sm">↗ View Site</a>
+    <a href="/export/pdf" class="btn btn-outline btn-sm">⬇ Export PDF</a>
+  </div>
+</div>
+
+<div class="content">
+
+  <div style="margin-bottom:24px">
+    <h1 style="font-size:26px;font-weight:600;color:var(--navy);margin-bottom:4px">{{ building.name }}</h1>
+    <div style="font-size:14px;color:var(--slate)">{{ building.address }}</div>
+    {% if building.last_scraped_at %}
+    <div style="font-size:12px;color:var(--slate-light);margin-top:4px">
+      Last scraped {{ building.last_scraped_at | et('%B %d, %Y at %H:%M ET') }}
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="stat-grid" style="margin-bottom:24px">
+    <div class="stat-card">
+      <div class="stat-label">Total Listings</div>
+      <div class="stat-value">{{ unit_count }}</div>
+    </div>
+    {% if min_rent %}
+    <div class="stat-card">
+      <div class="stat-label">Starting From</div>
+      <div class="stat-value gold">${{ '{:,.0f}'.format(min_rent) }}</div>
+      <div class="stat-sub">per month</div>
+    </div>
+    {% endif %}
+    {% if max_rent %}
+    <div class="stat-card">
+      <div class="stat-label">Up To</div>
+      <div class="stat-value">${{ '{:,.0f}'.format(max_rent) }}</div>
+      <div class="stat-sub">per month</div>
+    </div>
+    {% endif %}
+    {% if avg_rent %}
+    <div class="stat-card">
+      <div class="stat-label">Avg Rent</div>
+      <div class="stat-value">${{ '{:,.0f}'.format(avg_rent) }}</div>
+      <div class="stat-sub">per month</div>
+    </div>
+    {% endif %}
+    {% if avg_sqft %}
+    <div class="stat-card">
+      <div class="stat-label">Avg Size</div>
+      <div class="stat-value">{{ avg_sqft }}</div>
+      <div class="stat-sub">sq ft</div>
+    </div>
+    {% endif %}
+  </div>
+
+  {% macro unit_table(unit_list) %}
+  <div style="overflow-x:auto">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Floor Plan</th>
+          <th>Unit #</th>
+          <th>Floor</th>
+          <th>Sq Ft</th>
+          <th>Bathrooms</th>
+          <th>Monthly Rent</th>
+          <th>Available</th>
+          <th>Incentives</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for u in unit_list | sort(attribute='monthly_rent', reverse=False) %}
+        <tr>
+          <td style="font-weight:500">{{ u.floor_plan_name or '—' }}</td>
+          <td class="mono" style="color:var(--slate)">{{ u.unit_number or '—' }}</td>
+          <td class="mono" style="color:var(--slate)">{{ u.floor or '—' }}</td>
+          <td class="mono">{{ u.sq_ft or '—' }}</td>
+          <td style="color:var(--slate)">
+            {% if u.bathrooms %}{{ u.bathrooms|int if u.bathrooms == (u.bathrooms|int) else u.bathrooms }}{% else %}—{% endif %}
+          </td>
+          <td class="rent-value">
+            {% if u.monthly_rent %}${{ '{:,.0f}'.format(u.monthly_rent) }}{% else %}—{% endif %}
+          </td>
+          <td style="font-size:13px">{{ u.available_date or 'Available now' }}</td>
+          <td style="font-size:12px;color:#8B2010;max-width:220px">
+            {% if u.incentives %}
+            <span title="{{ u.incentives }}">{{ u.incentives[:60] }}{% if u.incentives|length > 60 %}…{% endif %}</span>
+            {% else %}—{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endmacro %}
+
+  {% for ut in ['Bachelor', '1-Bed', '2-Bed', '3-Bed'] %}
+  {% set typed_units = units | selectattr('unit_type', 'equalto', ut) | list %}
+  {% if typed_units %}
+  <div class="section-header">
+    <span class="section-title">{{ ut }} Units <span class="section-count">{{ typed_units | length }}</span></span>
+  </div>
+  <div class="card" style="margin-bottom:20px">
+    {{ unit_table(typed_units) }}
+  </div>
+  {% endif %}
+  {% endfor %}
+
+  {% set other_units = units | rejectattr('unit_type', 'in', ['Bachelor', '1-Bed', '2-Bed', '3-Bed']) | list %}
+  {% if other_units %}
+  <div class="section-header">
+    <span class="section-title">All Units <span class="section-count">{{ other_units | length }}</span></span>
+    <span style="font-size:12px;color:var(--amber)">⚠ Unit types pending classification — run scraper again after fix</span>
+  </div>
+  <div class="card" style="margin-bottom:20px">
+    <div style="overflow-x:auto">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Type</th>
+            <th>Unit #</th>
+            <th>Floor</th>
+            <th>Sq Ft</th>
+            <th>Bathrooms</th>
+            <th>Monthly Rent</th>
+            <th>Available</th>
+            <th>Incentives</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for u in other_units | sort(attribute='monthly_rent', reverse=False) %}
+          <tr>
+            <td style="font-weight:500;color:var(--slate)">{{ u.unit_type or '—' }}</td>
+            <td class="mono" style="color:var(--slate)">{{ u.unit_number or '—' }}</td>
+            <td class="mono" style="color:var(--slate)">{{ u.floor or '—' }}</td>
+            <td class="mono">{{ u.sq_ft or '—' }}</td>
+            <td style="color:var(--slate)">
+              {% if u.bathrooms %}{{ u.bathrooms|int if u.bathrooms == (u.bathrooms|int) else u.bathrooms }}{% else %}—{% endif %}
+            </td>
+            <td class="rent-value">
+              {% if u.monthly_rent %}${{ '{:,.0f}'.format(u.monthly_rent) }}{% else %}—{% endif %}
+            </td>
+            <td style="font-size:13px">{{ u.available_date or 'Available now' }}</td>
+            <td style="font-size:12px;color:#8B2010;max-width:220px">
+              {% if u.incentives %}
+              <span title="{{ u.incentives }}">{{ u.incentives[:60] }}{% if u.incentives|length > 60 %}…{% endif %}</span>
+              {% else %}—{% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
+
+  {% if not units %}
+  <div class="empty-state">
+    <div class="empty-state-icon">🏗️</div>
+    <div class="empty-state-title">No listings yet</div>
+    <div class="empty-state-desc">Run the scraper from the dashboard to load listings for this building.</div>
+  </div>
+  {% endif %}
+
+</div>
+{% endblock %}
