@@ -9,6 +9,13 @@ from typing import Optional
 
 from jose import JWTError, jwt
 from passlib.context import CryptContext
+
+# Patch for passlib + bcrypt 4.x compatibility
+import bcrypt as _bcrypt
+if not hasattr(_bcrypt, "__about__"):
+    class _about:
+        __version__ = _bcrypt.__version__
+    _bcrypt.__about__ = _about()
 from fastapi import Depends, HTTPException, Request, status
 
 SECRET_KEY = os.getenv("SECRET_KEY", "change-me-in-production-please-use-env")
@@ -18,7 +25,7 @@ ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("TOKEN_EXPIRE_MINUTES", "480"))
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
 ADMIN_PASSWORD_HASH = os.getenv(
     "ADMIN_PASSWORD_HASH",
-    "$2b$12$9Ukb5QW19WzXm3ggEUORz.KJ29F4F8hDCNE0Sjic5eMipSIOMkCQm",
+    "$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewdBpj1IjK8xG9Ee",
 )
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
