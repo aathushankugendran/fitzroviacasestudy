@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: fitzrovia-rental-intelligence
+    runtime: python
+    buildCommand: |
+      pip install -r requirements.txt
+      playwright install chromium
+      playwright install-deps chromium
+    startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: SECRET_KEY
+        generateValue: true
+      - key: ADMIN_USERNAME
+        value: admin
+      - key: ADMIN_PASSWORD_HASH
+        value: $2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewdBpj1IjK8xG9Ee
+      - key: TOKEN_EXPIRE_MINUTES
+        value: 480
+    disk:
+      name: data
+      mountPath: /data
+      sizeGB: 1
