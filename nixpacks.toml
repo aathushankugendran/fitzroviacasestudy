@@ -1,5 +1,0 @@
-[phases.build]
-cmds = ["pip install -r requirements.txt"]
-
-[start]
-cmd = "playwright install chromium --with-deps && uvicorn app:app --host 0.0.0.0 --port $PORT"
