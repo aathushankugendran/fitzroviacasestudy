@@ -184,7 +184,7 @@ class ECentralScraper(BaseScraper):
                 from datetime import datetime
                 day, month, year = int(m.group(1)), int(m.group(2)), int(m.group(3))
                 dt = datetime(year, month, day)
-                return dt.strftime("%b %-d, %Y")
+                return dt.strftime("%b {}, %Y").format(dt.day)
             except Exception:
                 return raw
         return raw if raw else "Available Now"
