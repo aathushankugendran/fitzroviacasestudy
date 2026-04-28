@@ -1,25 +1,56 @@
 """
 The Montgomery — 2388 Yonge Street
-Website: themontgomery.ca/floorplans (RentCafe + Cloudflare Turnstile)
+Website: themontgomery.ca/floorplans
 
-CONFIRMED via Chrome (Apr 26 2026):
-- Cloudflare Turnstile blocks headless Playwright navigation
-- BUT: fetching via page.evaluate (from within the browser) with credentials works
-- The Cloudflare cookies set on page load allow subsequent fetches to succeed
+CONFIRMED (Chrome Apr 27 2026): Data available without cookies via plain HTTP.
+Uses httpx directly — no Playwright needed.
 
-Strategy:
-1. Navigate to /floorplans once (triggers Cloudflare, sets cookies in browser)
-2. Use page.evaluate(fetch) to get all floor plan URLs from /floorplans HTML
-3. Use page.evaluate(fetch) to get each /floorplans/X page HTML
-4. Parse card-body divs for apartment data
+11 units confirmed across 8 floor plans:
+  Oriole, Lillian-D, Roselawn III, Anderson-D,
+  Maxwell, Broadway II, Redpath IV, Oswald
 """
 
 import re
+import httpx
+from bs4 import BeautifulSoup
 from loguru import logger
 from scraper.base import BaseScraper, UnitData
 
 BASE_URL       = "https://www.themontgomery.ca"
 FLOORPLANS_URL = "https://www.themontgomery.ca/floorplans"
+
+FP_URLS = [
+    "https://www.themontgomery.ca/floorplans/oriole",
+    "https://www.themontgomery.ca/floorplans/lillian---d",
+    "https://www.themontgomery.ca/floorplans/roselawn-iii---penthouse-collection",
+    "https://www.themontgomery.ca/floorplans/anderson---d",
+    "https://www.themontgomery.ca/floorplans/maxwell",
+    "https://www.themontgomery.ca/floorplans/broadway-ii---th",
+    "https://www.themontgomery.ca/floorplans/redpath-iv",
+    "https://www.themontgomery.ca/floorplans/oswald",
+]
+
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "Accept-Language": "en-CA,en-US;q=0.9,en;q=0.8",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Referer": "https://www.themontgomery.ca/floorplans",
+    "Origin": "https://www.themontgomery.ca",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "same-origin",
+    "Sec-Fetch-User": "?1",
+    "Sec-Ch-Ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+    "Sec-Ch-Ua-Mobile": "?0",
+    "Sec-Ch-Ua-Platform": '"macOS"',
+    "Upgrade-Insecure-Requests": "1",
+    "Connection": "keep-alive",
+}
 
 
 class MontgomeryScraper(BaseScraper):
@@ -27,120 +58,52 @@ class MontgomeryScraper(BaseScraper):
     building_address = "2388 Yonge Street, Toronto, ON"
     url = FLOORPLANS_URL
 
-    async def _start_browser(self, playwright):
-        """Stealth browser to pass Cloudflare Turnstile."""
-        self._browser = await playwright.chromium.launch(
-            headless=True,
-            args=["--disable-blink-features=AutomationControlled", "--no-sandbox"],
-        )
-        self._context = await self._browser.new_context(
-            viewport={"width": 1280, "height": 800},
-            user_agent=(
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/124.0.0.0 Safari/537.36"
-            ),
-            locale="en-CA",
-        )
-        await self._context.add_init_script("""
-            delete Object.getPrototypeOf(navigator).webdriver;
-            Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
-            window.chrome = {runtime: {}, loadTimes: () => {}, csi: () => {}};
-            Object.defineProperty(navigator, 'plugins', {get: () => [1,2,3]});
-        """)
-
     async def _do_scrape(self) -> list[UnitData]:
-        page = await self._new_page()
-        page.set_default_timeout(20_000)
         units = []
+        seen_units = set()
 
-        try:
-            # Step 1: Navigate to /floorplans — this passes Cloudflare and sets cookies
-            logger.info("[The Montgomery] Loading main page to pass Cloudflare...")
-            await page.goto(FLOORPLANS_URL, wait_until="networkidle", timeout=self.NAV_TIMEOUT)
-            await page.wait_for_timeout(3000)
-
-            # Verify we passed Cloudflare
-            title = await page.title()
-            logger.info(f"[The Montgomery] Page title: {title}")
-            if "security" in title.lower() or "verify" in title.lower():
-                logger.error("[The Montgomery] Still on Cloudflare challenge page")
-                return []
-
-            # Step 2: Read floor plan URLs directly from the already-loaded DOM
-            fp_urls = await page.evaluate("""
-                () => {
-                    const seen = new Set();
-                    const urls = [];
-                    for (const a of document.querySelectorAll('a[href*="/floorplans/"]')) {
-                        const href = a.getAttribute('href') || '';
-                        const full = href.startsWith('http') ? href : 'https://www.themontgomery.ca' + href;
-                        if (full.includes('themontgomery.ca/floorplans/')
-                            && !full.includes('#')
-                            && !full.includes('javascript')
-                            && !seen.has(full)) {
-                            seen.add(full);
-                            urls.push(full);
-                        }
-                    }
-                    return urls;
-                }
-            """)
-
-            logger.info(f"[The Montgomery] Found {len(fp_urls)} floor plan pages: "
-                        f"{[u.split('/')[-1] for u in fp_urls]}")
-
-            # Step 3: Fetch each floor plan page HTML using page.evaluate (with cookies)
-            for fp_url in fp_urls:
+        async with httpx.AsyncClient(
+            headers=HEADERS, timeout=20, follow_redirects=True
+        ) as client:
+            for fp_url in FP_URLS:
                 try:
-                    page_data = await page.evaluate(f"""
-                        async () => {{
-                            const r = await fetch('{fp_url}', {{credentials: 'include'}});
-                            const html = await r.text();
-                            const parser = new DOMParser();
-                            const doc = parser.parseFromString(html, 'text/html');
+                    resp = await client.get(fp_url)
+                    logger.info(f"[The Montgomery] {fp_url.split('/')[-1]}: status {resp.status_code}")
 
-                            // Floor plan info — use textContent (innerText undefined in DOMParser docs)
-                            const h1 = doc.querySelector('h1');
-                            const name = h1?.textContent?.trim() || '';
+                    if resp.status_code != 200:
+                        continue
 
-                            const text = doc.body?.textContent || '';
+                    soup = BeautifulSoup(resp.text, "lxml")
 
-                            // Apartment cards — class_= partial match: "card-body text-center"
-                            const allCards = Array.from(doc.querySelectorAll('div[class*="card-body"]'));
-                            const aptCards = allCards.filter(c => c.textContent.includes('Apartment:'));
+                    # Floor plan name
+                    h1 = soup.find("h1")
+                    fp_name = h1.get_text(strip=True) if h1 else fp_url.split("/")[-1]
 
-                            return {{
-                                name,
-                                bodyText: text.slice(0, 2000),
-                                aptCards: aptCards.map(c => c.textContent.trim().replace(/\s+/g,' '))
-                            }};
-                        }}
-                    """)
-
-                    fp_name   = page_data.get("name", fp_url.split("/")[-1])
-                    body_text = page_data.get("bodyText", "")
-                    apt_cards = page_data.get("aptCards", [])
-
-                    # Parse beds/baths/sqft from body text
-                    bed_m  = re.search(r"(\d+)\s*Bedroom",  body_text, re.IGNORECASE)
-                    bath_m = re.search(r"(\d+(?:\.\d)?)\s*Bathroom", body_text, re.IGNORECASE)
-                    sqft_m = (re.search(r"Up to ([\d,]+)\s*Sq", body_text, re.IGNORECASE) or
-                              re.search(r"([\d,]+)\s*Sq\.\s*Ft", body_text, re.IGNORECASE))
+                    # Beds / baths / sqft from page text
+                    text = soup.get_text(separator=" ")
+                    bed_m  = re.search(r"(\d+)\s*Bedroom",  text, re.IGNORECASE)
+                    bath_m = re.search(r"(\d+(?:\.\d)?)\s*Bathroom", text, re.IGNORECASE)
+                    sqft_m = (re.search(r"Up to ([\d,]+)\s*Sq", text, re.IGNORECASE) or
+                              re.search(r"([\d,]+)\s*Sq\.\s*Ft", text, re.IGNORECASE))
 
                     beds      = int(bed_m.group(1))                  if bed_m  else -1
                     bathrooms = float(bath_m.group(1))               if bath_m else None
                     sqft      = int(sqft_m.group(1).replace(",","")) if sqft_m else None
                     unit_type = {0:"Bachelor",1:"1-Bed",2:"2-Bed",3:"3-Bed"}.get(beds,"Unknown")
 
-                    logger.info(f"[The Montgomery] {fp_name} | {unit_type} | {sqft}sqft | "
-                                f"{len(apt_cards)} apt cards")
+                    # Apartment cards: div.card-body (partial match catches "card-body text-center")
+                    apt_cards = [
+                        c for c in soup.find_all("div", class_="card-body")
+                        if "Apartment:" in c.get_text()
+                    ]
+                    logger.info(f"[The Montgomery] {fp_name}: {len(apt_cards)} apartment card(s)")
 
-                    seen_units = set()
-                    for card_text in apt_cards:
+                    for card in apt_cards:
+                        card_text = card.get_text(separator=" ", strip=True)
+
                         apt_m  = re.search(r"Apartment:\s*#\s*(\w+)", card_text, re.IGNORECASE)
                         date_m = re.search(r"Date Available:\s*([\d/]+)", card_text, re.IGNORECASE)
-                        rent_m = re.search(r"Starting at:\s*\$([\d,]+)/Month", card_text, re.IGNORECASE)
+                        rent_m = re.search(r"Starting at:\s*\$([\d,]+)\s*/Month", card_text, re.IGNORECASE)
 
                         if not apt_m:
                             continue
@@ -149,7 +112,6 @@ class MontgomeryScraper(BaseScraper):
                             continue
                         seen_units.add(unit_num)
 
-                        avail_raw = date_m.group(1) if date_m else None
                         try:
                             rent = float(rent_m.group(1).replace(",","")) if rent_m else None
                         except Exception:
@@ -158,7 +120,9 @@ class MontgomeryScraper(BaseScraper):
                         if not rent or rent < 500:
                             continue
 
+                        avail_raw = date_m.group(1) if date_m else None
                         avail_str = self._parse_date(avail_raw) if avail_raw else "Available Now"
+
                         units.append(UnitData(
                             unit_number=unit_num,
                             unit_type=unit_type,
@@ -171,16 +135,13 @@ class MontgomeryScraper(BaseScraper):
                             incentives=None,
                             source_url=fp_url,
                         ))
-                        logger.debug(f"[The Montgomery] ✓ #{unit_num} | {fp_name} | "
-                                     f"{unit_type} | ${rent} | {avail_str}")
+                        logger.debug(
+                            f"[The Montgomery] ✓ #{unit_num} | {fp_name} | "
+                            f"{unit_type} | ${rent} | {avail_str}"
+                        )
 
                 except Exception as e:
-                    logger.debug(f"[The Montgomery] Error on {fp_url}: {e}")
-
-        except Exception as e:
-            logger.error(f"[The Montgomery] Fatal: {e}")
-        finally:
-            await page.close()
+                    logger.error(f"[The Montgomery] Error on {fp_url}: {e}")
 
         logger.info(f"[The Montgomery] Total: {len(units)} apartments")
         return units
