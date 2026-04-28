@@ -1,16 +1,11 @@
 """
 The Montgomery — 2388 Yonge Street
+Playwright only — Cloudflare requires real browser on Railway.
 
-WORKING APPROACH (confirmed in Chrome Apr 28 2026):
-- Navigate to /floorplans once with Playwright → passes Cloudflare
-- Then use page.evaluate(Promise.all(fetch())) with credentials:'include'
-- Each fetch uses the Cloudflare cookies set by the initial navigation
-- Status 200, data returned in ~1s per page, all 8 pages in parallel
-
-This is identical to how it worked when it scraped Oriole successfully.
-The fix is waiting properly for Cloudflare before fetching.
-
-CRITICAL regex: "$2,812 /Month" — space before /Month, needs \\s*
+Confirmed working in Railway logs (Apr 28):
+  [Montgomery] Playwright oriole: 2 unit(s)
+The approach works — Cloudflare DOES clear. The fix is waiting
+properly and using fetch() after it clears (not page.goto per page).
 """
 
 import re
@@ -19,17 +14,6 @@ from loguru import logger
 from scraper.base import BaseScraper, UnitData
 
 FLOORPLANS_URL = "https://www.themontgomery.ca/floorplans"
-
-FP_URLS = [
-    "https://www.themontgomery.ca/floorplans/oriole",
-    "https://www.themontgomery.ca/floorplans/lillian---d",
-    "https://www.themontgomery.ca/floorplans/roselawn-iii---penthouse-collection",
-    "https://www.themontgomery.ca/floorplans/anderson---d",
-    "https://www.themontgomery.ca/floorplans/maxwell",
-    "https://www.themontgomery.ca/floorplans/broadway-ii---th",
-    "https://www.themontgomery.ca/floorplans/redpath-iv",
-    "https://www.themontgomery.ca/floorplans/oswald",
-]
 
 
 class MontgomeryScraper(BaseScraper):
@@ -56,33 +40,30 @@ class MontgomeryScraper(BaseScraper):
 
     async def _do_scrape(self) -> list[UnitData]:
         page = await self._new_page()
-        page.set_default_timeout(30_000)
         units = []
         seen = set()
 
         try:
-            # Step 1: Navigate to /floorplans and wait for Cloudflare to clear
-            logger.info("[The Montgomery] Navigating to /floorplans...")
+            # Navigate to /floorplans and wait for Cloudflare to clear
+            logger.info("[The Montgomery] Navigating — waiting for Cloudflare...")
             await page.goto(FLOORPLANS_URL, wait_until="networkidle", timeout=self.NAV_TIMEOUT)
 
-            # Wait up to 30s for Cloudflare to clear
             for i in range(30):
                 title = await page.title()
                 if not any(x in title.lower() for x in ["moment", "verify", "security", "checking"]):
-                    logger.info(f"[The Montgomery] Ready after {i}s: {title}")
+                    logger.info(f"[The Montgomery] Cloudflare cleared at {i}s: {title}")
                     break
-                logger.info(f"[The Montgomery] Cloudflare... {i}s: {title}")
+                logger.info(f"[The Montgomery] Waiting for Cloudflare {i}s: {title}")
                 await page.wait_for_timeout(1000)
             else:
-                logger.error("[The Montgomery] Cloudflare did not clear in 30s")
+                logger.error("[The Montgomery] Cloudflare did not clear — aborting")
                 return []
 
-            await page.wait_for_timeout(1000)
+            await page.wait_for_timeout(2000)
 
-            # Step 2: Fetch all 8 floor plan pages in PARALLEL using browser cookies
-            # Confirmed working: status 200, data in ~1s, no new Cloudflare challenge
-            logger.info("[The Montgomery] Fetching all 8 floor plans in parallel...")
-            raw_results = await page.evaluate("""
+            # Fetch all 8 floor plans in parallel using Cloudflare cookies
+            logger.info("[The Montgomery] Fetching all floor plans in parallel...")
+            raw = await page.evaluate("""
                 async () => {
                     const urls = [
                         'https://www.themontgomery.ca/floorplans/oriole',
@@ -94,20 +75,22 @@ class MontgomeryScraper(BaseScraper):
                         'https://www.themontgomery.ca/floorplans/redpath-iv',
                         'https://www.themontgomery.ca/floorplans/oswald'
                     ];
-
                     return await Promise.all(urls.map(async url => {
                         try {
-                            const r = await fetch(url, {credentials: 'include'});
+                            const r = await fetch(url, {
+                                credentials: 'include',
+                                headers: {
+                                    'Referer': 'https://www.themontgomery.ca/floorplans',
+                                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+                                }
+                            });
                             const html = await r.text();
                             const doc = new DOMParser().parseFromString(html, 'text/html');
-
                             const name = doc.querySelector('h1')?.textContent?.trim() || '';
                             const body = doc.body?.textContent || '';
                             const beds = body.match(/(\\d+)\\s*Bedroom/i)?.[1];
                             const bath = body.match(/(\\d+(?:\\.\\d)?)\\s*Bathroom/i)?.[1];
-                            const sqftM = body.match(/Up to ([\\d,]+)\\s*Sq/i) ||
-                                          body.match(/([\\d,]+)\\s*Sq\\.\\s*Ft/i);
-
+                            const sqft = (body.match(/Up to ([\\d,]+)\\s*Sq/i) || body.match(/([\\d,]+)\\s*Sq\\.\\s*Ft/i))?.[1];
                             const cards = Array.from(doc.querySelectorAll('div[class*="card-body"]'))
                                 .filter(c => c.textContent.includes('Apartment:'))
                                 .map(c => {
@@ -118,73 +101,58 @@ class MontgomeryScraper(BaseScraper):
                                         rent: t.match(/Starting at:\\s*\\$([\\d,]+)\\s*\\/Month/i)?.[1]
                                     };
                                 }).filter(c => c.apt && c.rent);
-
-                            return {url, name, beds, bath, sqft: sqftM?.[1], cards, status: r.status};
+                            return {url, name, beds, bath, sqft, cards, status: r.status};
                         } catch(e) {
-                            return {url, cards: [], error: e.message, status: 0};
+                            return {url, cards: [], error: e.message};
                         }
                     }));
                 }
             """)
 
-            logger.info(f"[The Montgomery] Got results for {len(raw_results)} pages")
-
-            # Step 3: Parse results
-            for pd in raw_results:
+            logger.info(f"[The Montgomery] Parallel fetch done: {len(raw)} pages")
+            for pd in raw:
                 fp_name  = pd.get("name") or pd["url"].split("/")[-1]
                 beds_raw = pd.get("beds")
                 bath_raw = pd.get("bath")
                 sqft_raw = (pd.get("sqft") or "").replace(",","")
                 fp_url   = pd["url"]
-                status   = pd.get("status", 0)
-
                 if pd.get("error"):
-                    logger.warning(f"[The Montgomery] {fp_name}: error — {pd['error']}")
+                    logger.warning(f"[The Montgomery] {fp_name}: {pd['error']}")
                     continue
 
                 beds      = int(beds_raw) if beds_raw else -1
                 bathrooms = float(bath_raw) if bath_raw else None
                 sqft      = int(sqft_raw) if sqft_raw.isdigit() else None
                 unit_type = {0:"Bachelor",1:"1-Bed",2:"2-Bed",3:"3-Bed"}.get(beds,"Unknown")
-
-                logger.info(f"[The Montgomery] {fp_name}: {len(pd.get('cards',[]))} cards | HTTP {status}")
+                logger.info(f"[The Montgomery] {fp_name}: {len(pd.get('cards',[]))} cards | HTTP {pd.get('status')}")
 
                 for card in pd.get("cards", []):
                     unit_num = (card.get("apt") or "").strip()
                     if not unit_num or unit_num in seen:
                         continue
                     seen.add(unit_num)
-
                     try:
                         rent = float(card["rent"].replace(",",""))
                     except Exception:
                         continue
                     if rent < 500:
                         continue
-
-                    avail_raw = card.get("date")
                     avail_str = "Available Now"
-                    if avail_raw:
-                        m = re.match(r"(\d{1,2})/(\d{1,2})/(\d{4})", avail_raw)
+                    if card.get("date"):
+                        m = re.match(r"(\d{1,2})/(\d{1,2})/(\d{4})", card["date"])
                         if m:
                             try:
                                 from datetime import datetime
                                 dt = datetime(int(m.group(3)), int(m.group(2)), int(m.group(1)))
                                 avail_str = dt.strftime("%b {}, %Y").format(dt.day)
                             except Exception:
-                                avail_str = avail_raw
-
+                                avail_str = card["date"]
                     units.append(UnitData(
-                        unit_number=unit_num,
-                        unit_type=unit_type,
-                        bedrooms=beds,
-                        bathrooms=bathrooms,
-                        floor_plan_name=fp_name,
-                        sq_ft=sqft,
-                        monthly_rent=rent,
-                        available_date=avail_str,
-                        incentives=None,
-                        source_url=fp_url,
+                        unit_number=unit_num, unit_type=unit_type,
+                        bedrooms=beds, bathrooms=bathrooms,
+                        floor_plan_name=fp_name, sq_ft=sqft,
+                        monthly_rent=rent, available_date=avail_str,
+                        incentives=None, source_url=fp_url,
                     ))
                     logger.debug(f"[The Montgomery] ✓ #{unit_num} | {fp_name} | {unit_type} | ${rent}")
 
