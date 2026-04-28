@@ -2,22 +2,18 @@
 The Montgomery — 2388 Yonge Street
 Website: themontgomery.ca/floorplans (RentCafe + Cloudflare)
 
-CONFIRMED ISSUES ON RAILWAY:
-1. httpx gets 403 — Railway IP blocked
-2. Playwright: Cloudflare "Just a moment..." takes >20s to clear
-3. After Cloudflare clears, page.goto() per floor plan is too slow
+CONFIRMED APPROACH (tested in Chrome Apr 28 2026):
+- httpx gets 403 on Railway (Cloudflare blocks server IPs)
+- BUT: fetch() with credentials:'include' from within the browser WORKS
+  because the browser already has Cloudflare cookies from the page load
+- Strategy: Playwright navigates to /floorplans once (passes Cloudflare),
+  then uses page.evaluate(Promise.all(fetch())) to get all 8 pages in parallel
 
-FIX:
-1. httpx first (works locally, fast)
-2. Playwright fallback with 30s Cloudflare wait
-3. After Cloudflare clears, use Promise.all(fetch()) for ALL 8 pages in parallel
-   — fetch() reuses Cloudflare cookies, no new challenge per page, ~2s total
-
-CRITICAL regex: rent is "$2,812 /Month" (space before /Month from HTML span split)
+CRITICAL: rent text is "$2,812 /Month" (SPACE before /Month from HTML span split)
+Regex must use \\s* before /Month
 """
 
 import re
-import httpx
 from bs4 import BeautifulSoup
 from loguru import logger
 from scraper.base import BaseScraper, UnitData
@@ -34,19 +30,6 @@ FP_URLS = [
     "https://www.themontgomery.ca/floorplans/redpath-iv",
     "https://www.themontgomery.ca/floorplans/oswald",
 ]
-
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "en-CA,en;q=0.9",
-    "Referer": "https://www.themontgomery.ca/floorplans",
-    "Sec-Fetch-Dest": "document",
-    "Sec-Fetch-Mode": "navigate",
-    "Sec-Fetch-Site": "same-origin",
-}
 
 
 class MontgomeryScraper(BaseScraper):
@@ -76,61 +59,31 @@ class MontgomeryScraper(BaseScraper):
         """)
 
     async def _do_scrape(self) -> list[UnitData]:
-        units = await self._scrape_httpx()
-        if units is None:
-            logger.info("[The Montgomery] httpx blocked — falling back to Playwright")
-            units = await self._scrape_playwright()
-        return units or []
-
-    async def _scrape_httpx(self):
-        """Returns list or None if blocked."""
-        seen = set()
-        units = []
-        async with httpx.AsyncClient(headers=HEADERS, timeout=20, follow_redirects=True) as client:
-            test = await client.get(FP_URLS[0])
-            if test.status_code == 403:
-                logger.info("[The Montgomery] httpx got 403 — IP blocked")
-                return None
-            for fp_url in FP_URLS:
-                try:
-                    resp = await client.get(fp_url)
-                    if resp.status_code != 200:
-                        continue
-                    new = [u for u in self._parse_html(resp.text, fp_url) if u.unit_number not in seen]
-                    for u in new:
-                        seen.add(u.unit_number)
-                    units.extend(new)
-                    logger.info(f"[The Montgomery] httpx {fp_url.split('/')[-1]}: {len(new)} unit(s)")
-                except Exception as e:
-                    logger.error(f"[The Montgomery] httpx error {fp_url}: {e}")
-        logger.info(f"[The Montgomery] httpx total: {len(units)}")
-        return units
-
-    async def _scrape_playwright(self):
-        """Playwright fallback — wait for Cloudflare, then fetch all 8 pages in parallel."""
-        seen = set()
-        units = []
         page = await self._new_page()
+        page.set_default_timeout(30_000)
+        units = []
+        seen = set()
 
         try:
-            # Navigate to main page to establish Cloudflare session
+            # Step 1: Navigate to /floorplans — passes Cloudflare, sets session cookies
+            logger.info("[The Montgomery] Loading /floorplans to pass Cloudflare...")
             await page.goto(FLOORPLANS_URL, wait_until="networkidle", timeout=self.NAV_TIMEOUT)
 
-            # Wait UP TO 30s for Cloudflare "Just a moment..." to resolve
+            # Wait up to 30s for Cloudflare to clear
             for i in range(30):
                 title = await page.title()
-                if "moment" not in title.lower() and "security" not in title.lower() and "verify" not in title.lower():
+                if "moment" not in title.lower() and "verify" not in title.lower() and "security" not in title.lower():
                     logger.info(f"[The Montgomery] Cloudflare cleared after {i}s: {title}")
                     break
-                logger.info(f"[The Montgomery] Waiting for Cloudflare ({i}s): {title}")
+                logger.info(f"[The Montgomery] Cloudflare wait {i}s: {title}")
                 await page.wait_for_timeout(1000)
             else:
-                logger.error("[The Montgomery] Cloudflare not cleared after 30s — giving up")
+                logger.error("[The Montgomery] Cloudflare never cleared")
                 return []
 
-            # Fetch ALL 8 floor plan pages IN PARALLEL using existing Cloudflare cookies
-            # fetch() reuses cookies — no new Cloudflare challenge per page
-            # This completes in ~2s vs 40s with page.goto() per page
+            # Step 2: Fetch all 8 floor plan pages in parallel using browser cookies
+            # fetch() with credentials:'include' sends Cloudflare cookies — no new challenge
+            # Confirmed working in Chrome: status 200, cards found
             raw_results = await page.evaluate("""
                 async () => {
                     const urls = [
@@ -146,99 +99,100 @@ class MontgomeryScraper(BaseScraper):
                     return await Promise.all(urls.map(async url => {
                         try {
                             const r = await fetch(url, {credentials: 'include'});
-                            return {url, html: await r.text(), status: r.status};
+                            const html = await r.text();
+                            const doc = new DOMParser().parseFromString(html, 'text/html');
+                            const name = doc.querySelector('h1')?.textContent?.trim() || '';
+                            const bodyText = doc.body?.textContent || '';
+                            const beds = bodyText.match(/(\\d+)\\s*Bedroom/i)?.[1];
+                            const bath = bodyText.match(/(\\d+(?:\\.\\d)?)\\s*Bathroom/i)?.[1];
+                            const sqftM = bodyText.match(/Up to ([\\d,]+)\\s*Sq/i) ||
+                                          bodyText.match(/([\\d,]+)\\s*Sq\\.\\s*Ft/i);
+                            const sqft = sqftM?.[1];
+                            const cards = Array.from(doc.querySelectorAll('div[class*="card-body"]'))
+                                .filter(c => c.textContent.includes('Apartment:'))
+                                .map(c => {
+                                    const t = c.textContent.replace(/\\s+/g, ' ').trim();
+                                    return {
+                                        apt:  t.match(/Apartment:\\s*#\\s*(\\w+)/i)?.[1],
+                                        date: t.match(/Date Available:\\s*([\\d/]+)/i)?.[1],
+                                        rent: t.match(/Starting at:\\s*\\$([\\d,]+)\\s*\\/Month/i)?.[1]
+                                    };
+                                }).filter(c => c.apt && c.rent);
+                            return {url, name, beds, bath, sqft, cards, status: r.status};
                         } catch(e) {
-                            return {url, html: '', status: 0, error: e.message};
+                            return {url, cards: [], error: e.message};
                         }
                     }));
                 }
             """)
 
-            logger.info(f"[The Montgomery] Parallel fetch: {len(raw_results)} pages")
+            logger.info(f"[The Montgomery] Fetched {len(raw_results)} pages in parallel")
 
-            for result in raw_results:
-                fp_url = result['url']
-                if result.get('status') != 200 or not result.get('html'):
-                    logger.debug(f"[The Montgomery] {fp_url.split('/')[-1]}: status {result.get('status')}")
+            for page_data in raw_results:
+                if page_data.get("error"):
+                    logger.debug(f"[The Montgomery] Error: {page_data['error']}")
                     continue
-                new = [u for u in self._parse_html(result['html'], fp_url) if u.unit_number not in seen]
-                for u in new:
-                    seen.add(u.unit_number)
-                units.extend(new)
-                logger.info(f"[The Montgomery] {fp_url.split('/')[-1]}: {len(new)} unit(s)")
+
+                fp_name  = page_data.get("name") or page_data["url"].split("/")[-1]
+                beds_raw = page_data.get("beds")
+                bath_raw = page_data.get("bath")
+                sqft_raw = (page_data.get("sqft") or "").replace(",","")
+                fp_url   = page_data["url"]
+                status   = page_data.get("status", 0)
+
+                beds      = int(beds_raw) if beds_raw else -1
+                bathrooms = float(bath_raw) if bath_raw else None
+                sqft      = int(sqft_raw) if sqft_raw.isdigit() else None
+                unit_type = {0:"Bachelor",1:"1-Bed",2:"2-Bed",3:"3-Bed"}.get(beds,"Unknown")
+
+                logger.info(f"[The Montgomery] {fp_name}: {len(page_data.get('cards',[]))} card(s) | HTTP {status}")
+
+                for card in page_data.get("cards", []):
+                    unit_num = (card.get("apt") or "").strip()
+                    if not unit_num or unit_num in seen:
+                        continue
+                    seen.add(unit_num)
+
+                    try:
+                        rent = float(card["rent"].replace(",",""))
+                    except Exception:
+                        continue
+                    if rent < 500:
+                        continue
+
+                    avail_raw = card.get("date")
+                    if avail_raw:
+                        m = re.match(r"(\d{1,2})/(\d{1,2})/(\d{4})", avail_raw)
+                        if m:
+                            from datetime import datetime
+                            try:
+                                dt = datetime(int(m.group(3)), int(m.group(2)), int(m.group(1)))
+                                avail_str = dt.strftime("%b {}, %Y").format(dt.day)
+                            except Exception:
+                                avail_str = avail_raw
+                        else:
+                            avail_str = avail_raw
+                    else:
+                        avail_str = "Available Now"
+
+                    units.append(UnitData(
+                        unit_number=unit_num,
+                        unit_type=unit_type,
+                        bedrooms=beds,
+                        bathrooms=bathrooms,
+                        floor_plan_name=fp_name,
+                        sq_ft=sqft,
+                        monthly_rent=rent,
+                        available_date=avail_str,
+                        incentives=None,
+                        source_url=fp_url,
+                    ))
+                    logger.debug(f"[The Montgomery] ✓ #{unit_num} | {fp_name} | {unit_type} | ${rent}")
 
         except Exception as e:
-            logger.error(f"[The Montgomery] Playwright fatal: {e}")
+            logger.error(f"[The Montgomery] Fatal: {e}")
         finally:
             await page.close()
 
-        logger.info(f"[The Montgomery] Playwright total: {len(units)}")
-        return units
-
-    def _parse_html(self, html: str, fp_url: str) -> list[UnitData]:
-        soup = BeautifulSoup(html, "lxml")
-        units = []
-
-        h1 = soup.find("h1")
-        fp_name = h1.get_text(strip=True) if h1 else fp_url.split("/")[-1]
-
-        text = soup.get_text(separator=" ")
-        bed_m  = re.search(r"(\d+)\s*Bedroom", text, re.IGNORECASE)
-        bath_m = re.search(r"(\d+(?:\.\d)?)\s*Bathroom", text, re.IGNORECASE)
-        sqft_m = (re.search(r"Up to ([\d,]+)\s*Sq", text, re.IGNORECASE) or
-                  re.search(r"([\d,]+)\s*Sq\.\s*Ft", text, re.IGNORECASE))
-
-        beds      = int(bed_m.group(1))                  if bed_m  else -1
-        bathrooms = float(bath_m.group(1))               if bath_m else None
-        sqft      = int(sqft_m.group(1).replace(",","")) if sqft_m else None
-        unit_type = {0:"Bachelor",1:"1-Bed",2:"2-Bed",3:"3-Bed"}.get(beds, "Unknown")
-
-        for card in soup.find_all("div", class_="card-body"):
-            if "Apartment:" not in card.get_text():
-                continue
-            card_text = card.get_text(separator=" ", strip=True)
-            apt_m  = re.search(r"Apartment:\s*#\s*(\w+)", card_text, re.IGNORECASE)
-            date_m = re.search(r"Date Available:\s*([\d/]+)", card_text, re.IGNORECASE)
-            # CRITICAL: "$2,812 /Month" has space before /Month
-            rent_m = re.search(r"Starting at:\s*\$([\d,]+)\s*/Month", card_text, re.IGNORECASE)
-
-            if not apt_m:
-                continue
-            unit_num = apt_m.group(1).strip()
-            try:
-                rent = float(rent_m.group(1).replace(",","")) if rent_m else None
-            except Exception:
-                rent = None
-            if not rent or rent < 500:
-                continue
-
-            avail_raw = date_m.group(1) if date_m else None
-            if avail_raw:
-                m = re.match(r"(\d{1,2})/(\d{1,2})/(\d{4})", avail_raw)
-                if m:
-                    from datetime import datetime
-                    try:
-                        dt = datetime(int(m.group(3)), int(m.group(2)), int(m.group(1)))
-                        avail_str = dt.strftime("%b {}, %Y").format(dt.day)
-                    except Exception:
-                        avail_str = avail_raw
-                else:
-                    avail_str = avail_raw
-            else:
-                avail_str = "Available Now"
-
-            units.append(UnitData(
-                unit_number=unit_num,
-                unit_type=unit_type,
-                bedrooms=beds,
-                bathrooms=bathrooms,
-                floor_plan_name=fp_name,
-                sq_ft=sqft,
-                monthly_rent=rent,
-                available_date=avail_str,
-                incentives=None,
-                source_url=fp_url,
-            ))
-            logger.debug(f"[The Montgomery] ✓ #{unit_num} | {fp_name} | {unit_type} | ${rent}")
-
+        logger.info(f"[The Montgomery] Total: {len(units)} apartments")
         return units
