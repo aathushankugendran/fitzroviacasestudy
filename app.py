@@ -16,6 +16,8 @@ import asyncio
 import json
 import os
 from datetime import datetime, timedelta, timezone
+
+IS_RENDER = os.environ.get("RENDER") == "true"
 from zoneinfo import ZoneInfo
 
 ET = ZoneInfo("America/Toronto")  # Eastern Time (handles DST automatically)
@@ -47,8 +49,6 @@ from auth import (
 from pdf_export import generate_rental_report
 
 app = FastAPI(title="Fitzrovia Rental Intelligence")
-# Ensure static directory exists in deploy environments where empty folders are not checked in.
-os.makedirs("static", exist_ok=True)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
@@ -259,6 +259,11 @@ async def trigger_scrape(
     user: str = Depends(require_auth),
 ):
     global _scrape_running
+    if IS_RENDER:
+        return JSONResponse({
+            "status": "unavailable",
+            "message": "Scraping is disabled on the hosted demo. Run locally to scrape fresh data."
+        })
     if _scrape_running:
         return JSONResponse({"status": "already_running"})
 
@@ -278,6 +283,30 @@ async def _run_scrape_background():
         logger.error(f"Background scrape error: {e}")
     finally:
         _scrape_running = False
+
+
+@app.post("/scrape/building/{building_id}")
+async def scrape_single_building(
+    background_tasks: BackgroundTasks,
+    building_id: int,
+    db: Session = Depends(get_db),
+    user: str = Depends(require_auth),
+):
+    building = db.query(Building).filter(Building.id == building_id).first()
+    if not building:
+        return JSONResponse({"status": "error", "message": "Building not found"})
+
+    background_tasks.add_task(_run_single_scrape, building.name)
+    return JSONResponse({"status": "started", "building": building.name})
+
+
+async def _run_single_scrape(building_name: str):
+    try:
+        from scraper.runner import run_single_scraper
+        await run_single_scraper(building_name)
+        logger.info(f"Single scrape complete: {building_name}")
+    except Exception as e:
+        logger.error(f"Single scrape error for {building_name}: {e}")
 
 
 @app.get("/scrape/status")
@@ -362,3 +391,23 @@ async def export_pdf(
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@app.get("/debug/scrape/{building_name}")
+async def debug_scrape(building_name: str, user: str = Depends(require_auth)):
+    """Debug endpoint — runs one scraper and returns full output inline."""
+    import traceback
+    from scraper.buildings import ALL_SCRAPERS
+    scraper_cls = next((s for s in ALL_SCRAPERS if s.building_name.lower() == building_name.lower()), None)
+    if not scraper_cls:
+        return JSONResponse({"error": f"No scraper found for: {building_name}", "available": [s.building_name for s in ALL_SCRAPERS]})
+    try:
+        scraper = scraper_cls()
+        units = await scraper.scrape()
+        return JSONResponse({
+            "building": building_name,
+            "unit_count": len(units),
+            "units": [{"unit": u.unit_number, "type": u.unit_type, "rent": u.monthly_rent, "plan": u.floor_plan_name} for u in units[:5]]
+        })
+    except Exception as e:
+        return JSONResponse({"error": str(e), "traceback": traceback.format_exc()})
