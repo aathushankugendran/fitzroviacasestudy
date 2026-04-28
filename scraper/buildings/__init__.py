@@ -1,23 +1,29 @@
-from .parker import ParkerScraper
-from .story_midtown import StoryMidtownScraper
-from .selby import SelbyScraper
-from .ecentral import ECentralScraper
-from .montgomery import MontgomeryScraper
-from .whitney import WhitneyScraper
-from .hampton import HamptonScraper
-from .e18hteen import E18HTEENScraper
-from .corner_broadway import CornerBroadwayScraper
-from .akoya import AkoyaScraper
+"""
+Safe scraper imports — if one file has an error it won't break the others.
+"""
 
-ALL_SCRAPERS = [
-    ParkerScraper,
-    StoryMidtownScraper,
-    SelbyScraper,
-    ECentralScraper,
-    MontgomeryScraper,
-    WhitneyScraper,
-    HamptonScraper,
-    E18HTEENScraper,
-    CornerBroadwayScraper,
-    AkoyaScraper,
-]
+from loguru import logger
+
+ALL_SCRAPERS = []
+
+def _safe_import(module_path, class_name):
+    try:
+        import importlib
+        mod = importlib.import_module(module_path)
+        cls = getattr(mod, class_name)
+        ALL_SCRAPERS.append(cls)
+    except Exception as e:
+        logger.error(f"Failed to import {class_name} from {module_path}: {e}")
+
+_safe_import("scraper.buildings.parker",          "ParkerScraper")
+_safe_import("scraper.buildings.story_midtown",   "StoryMidtownScraper")
+_safe_import("scraper.buildings.selby",           "SelbyScraper")
+_safe_import("scraper.buildings.ecentral",        "ECentralScraper")
+_safe_import("scraper.buildings.montgomery",      "MontgomeryScraper")
+_safe_import("scraper.buildings.whitney",         "WhitneyScraper")
+_safe_import("scraper.buildings.hampton",         "HamptonScraper")
+_safe_import("scraper.buildings.e18hteen",        "E18HTEENScraper")
+_safe_import("scraper.buildings.corner_broadway", "CornerBroadwayScraper")
+_safe_import("scraper.buildings.akoya",           "AkoyaScraper")
+
+logger.info(f"Loaded {len(ALL_SCRAPERS)} scrapers: {[s.building_name for s in ALL_SCRAPERS]}")
