@@ -109,7 +109,7 @@ The runner (`scraper/runner.py`) orchestrates all scrapers asynchronously using 
 | **E18HTEEN** | myrental.ca/apartments-for-rent/18-erskine-ave | Rentsync unit-table-builder API (propertyId: 33874, siteKey: kg_rebuild) — no browser required |
 | **Corner on Broadway** | thecornerrentals.com/suites | BeautifulSoup — parses a clean HTML `<table>` containing all floor plan rows |
 | **Akoya Living** | akoyaliving.ca/suites | Rentsync unit-table-builder API (propertyId: 303333) — direct httpx call |
-| **The Montgomery** | themontgomery.ca/floorplans | Playwright with stealth configuration — see Known Issues |
+| **The Montgomery** | themontgomery.ca/floorplans | Playwright with stealth configuration|
 
 ---
 
