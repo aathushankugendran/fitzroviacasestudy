@@ -1,70 +1,300 @@
 # Fitzrovia Rental Intelligence Platform
 
-A competitive rental intelligence dashboard built to track unit availability, pricing, and incentives across 10 competitor apartment buildings in Toronto's Yonge & Eglinton midtown corridor.
+**A live competitive rental intelligence dashboard tracking unit availability, pricing, and incentives across 10 competitor apartment buildings in Toronto's Yonge & Eglinton midtown corridor.**
 
-> **A note on development:** This platform was built with the assistance of Claude (Anthropic's AI) as a development partner — helping architect the scraping logic, debug bot detection issues, and build the dashboard UI. Due to Claude's credit limits and a 5-hour cooldown between sessions, and with final exams approaching, I was unable to bring every scraper to full completion. What's presented here represents my best work under those constraints — a fully functional platform with 8 of 10 buildings scraping accurately, a polished dashboard, live incentive detection, and a working deployment. I'm proud of the depth and technical rigour of what was built in the time available.
+🔗 **Live Dashboard:** [web-production-10bb7.up.railway.app](https://web-production-10bb7.up.railway.app)
+📦 **Repository:** [github.com/aathushankugendran/fitzroviacasestudy](https://github.com/aathushankugendran/fitzroviacasestudy)
 
 ---
 
-## What It Does
+## Overview
 
-The platform scrapes live rental data from 10 competing properties and consolidates it into a single internal dashboard. It tracks unit-level data including floor plan name, bedrooms, bathrooms, square footage, monthly rent, availability date, and current incentives (free months, move-in bonuses, included utilities). The dashboard allows filtering by unit type across all buildings and exports a consolidated PDF report.
+This platform was built as an internal competitive intelligence tool for Fitzrovia Real Estate. It automates the collection of rental listing data from 10 competing properties in the Yonge & Eglinton submarket, aggregating unit-level pricing, availability, and incentive information into a single authenticated dashboard with PDF export capabilities.
+
+The platform runs scrapers concurrently against a mix of APIs, server-rendered HTML, and JavaScript-heavy frontends — each requiring a tailored extraction approach. Data is stored in SQLite and surfaced through a FastAPI/Jinja2 dashboard with per-unit filtering, building detail views, and a formatted PDF report.
+
+---
+
+## What It Tracks
+
+For every available unit across all 10 buildings, the platform captures:
+
+- Floor plan name and unit number
+- Bedroom and bathroom count
+- Square footage
+- Monthly rent (min/max where available)
+- Availability date
+- Active incentives (free months, move-in bonuses, included utilities)
+
+Incentives are extracted dynamically on every scrape run — the base class visits each building's homepage and parses promotional text using regex patterns. Nothing is hardcoded.
 
 ---
 
 ## Tech Stack
 
-**Backend**
-- Python 3.11
-- FastAPI — web framework
-- Uvicorn — ASGI server
-- SQLAlchemy — ORM / database layer
-- SQLite — local database
-- Jinja2 — HTML templating
-- python-jose + bcrypt / passlib — JWT auth + password hashing
+### Backend
 
-**Scraping**
-- Playwright (headless Chromium) — browser automation for JavaScript-rendered sites
-- httpx — async HTTP client for server-rendered sites
-- BeautifulSoup4 + lxml — HTML parsing
-- Loguru — structured logging
+| Package | Version | Purpose |
+|---|---|---|
+| Python | 3.11 | Runtime |
+| FastAPI | 0.115.0 | Web framework + REST API |
+| Uvicorn | 0.30.6 | ASGI server |
+| SQLAlchemy | 2.0.36 | ORM / database layer |
+| SQLite | — | Local persistent database |
+| Jinja2 | 3.1.4 | Server-side HTML templating |
+| python-jose | 3.3.0 | JWT token generation + validation |
+| bcrypt | 4.2.1 | Password hashing |
 
-**Frontend**
-- Vanilla HTML / CSS / JS — no framework
-- DM Sans, DM Mono, Playfair Display (Google Fonts)
-- Color scheme: #d84028 (orange) / black / white
+### Scraping
 
-**PDF Export**
-- ReportLab
+| Package | Version | Purpose |
+|---|---|---|
+| Playwright | 1.47.0 | Headless Chromium for JavaScript-rendered pages |
+| httpx | 0.27.2 | Async HTTP client for API/server-rendered pages |
+| BeautifulSoup4 | 4.12.3 | HTML parsing |
+| lxml | 5.3.0 | Fast HTML parser backend |
+| Loguru | 0.7.2 | Structured logging |
+| tenacity | 9.0.0 | Retry logic |
 
-**Dev Tools**
-- Conda (Python environment management)
-- Git / GitHub
-- Railway (hosting)
-- Claude MCP Chrome extension — used to inspect live sites, intercept API calls, and test selectors in real browser sessions
+### Frontend
+
+- Vanilla HTML / CSS / JavaScript — no frontend framework
+- Google Fonts: DM Sans, DM Mono, Playfair Display
+- Color scheme: `#d84028` (brand orange), black, white
+
+### PDF Export
+
+- ReportLab 4.2.2 — programmatic PDF generation with custom table styling, section headers, and per-unit breakdowns by bedroom type
+
+### Infrastructure
+
+- **Railway** — cloud deployment (Docker-based, Playwright Chromium pre-installed)
+- **Docker** — `mcr.microsoft.com/playwright/python:v1.47.0-jammy` base image
+- **GitHub** — source control and CI/CD (Railway auto-deploys on push to `main`)
+- **Conda** — Python environment management
 
 ---
 
 ## How the Scraping Works
 
-Each building has a dedicated scraper in `scraper/buildings/`. Every scraper inherits from `BaseScraper` which handles browser setup, incentive fetching, and database saving. When a scrape is triggered from the dashboard, all 10 scrapers run concurrently (max 3 at a time) and results are saved to SQLite.
+### Architecture
 
-Incentives are scraped dynamically on every run — the base class visits each building's homepage and extracts promo text using regex patterns. Nothing is hardcoded.
+Each building has a dedicated scraper module in `scraper/buildings/`. All scrapers inherit from `BaseScraper` (`scraper/base.py`) which provides:
+
+- Playwright browser lifecycle management (launch, context, teardown)
+- Stealth browser configuration to reduce bot detection (webdriver flag removal, plugin spoofing, locale injection)
+- Shared incentive scraping via `_fetch_incentives_live()` — visits the building homepage and extracts promo text
+- Database save logic
+- Structured logging via Loguru
+
+The runner (`scraper/runner.py`) orchestrates all scrapers asynchronously using `asyncio.Semaphore` with a concurrency cap of 3 simultaneous scrapers to manage memory on Railway's container.
+
+### Trigger Flow
+
+1. User clicks **Refresh Data** on the dashboard (or **↻** on an individual building card)
+2. FastAPI receives a `POST /scrape` (all buildings) or `POST /scrape/building/{id}` (single building)
+3. The scrape runs in the background via FastAPI's `BackgroundTasks`
+4. The frontend polls `GET /scrape/status` every 2 seconds and auto-reloads when the run completes
 
 ### Per-Building Data Sources
 
-| Building | URL Scraped | Method |
+| Building | URL | Method |
 |---|---|---|
-| **Parker** | parkerlife.ca | Playwright — clicks CHECK AVAILABILITY buttons, reads modal table |
-| **Story of Midtown** | mystorymidtown.com/suites | Rentsync floorplan-navigator API (75 Broadway UUID) — floor-by-floor JSON |
-| **The Selby** | triconliving.com/apartment/the-selby | Direct JSON API (triconliving.com/api/v1/apartments/the-selby) |
-| **eCentral** | ecentralliving.com/rental-suites | DOM scrape — `.row.align-items-end.no-gutters` table rows per bedroom section |
-| **The Whitney** | thewhitneyonredpath.com/apartments + /skyline-view-collection | Playwright — Elementor card grid, both pages merged |
-| **The Hampton** | thehampton.ca/floorplans + WordPress REST API | `/wp-json/wp/v2/project` returns all floor plans as structured JSON |
-| **E18HTEEN** | myrental.ca/apartments-for-rent/18-erskine-ave | Playwright — filter click + `.unit-group-card` DOM parsing |
-| **Corner on Broadway** | thecornerrentals.com/suites | BeautifulSoup — clean HTML `<table>` with all floor plan rows |
-| **Akoya Living** | akoyaliving.ca/suites | Rentsync unit-table-builder API (propertyId: 303333) |
-| **The Montgomery** | themontgomery.ca/floorplans | Playwright + Cloudflare bypass — see known issues below |
+| **Parker** | parkerlife.ca/floorplans | Playwright — clicks 10 `CHECK AVAILABILITY` buttons, reads modal tables |
+| **Story of Midtown** | mystorymidtown.com/suites | Rentsync floorplan-navigator XHR API (property UUID: `6d6e564e`, 75 Broadway) — intercepts the XHR fired on page load |
+| **The Selby** | triconliving.com/apartment/the-selby | Direct JSON API — `triconliving.com/api/v1/apartments/the-selby` returns full unit + floorplan data |
+| **eCentral** | ecentralliving.com/rental-suites | BeautifulSoup DOM scrape — `.row.align-items-end.no-gutters` card sections per bedroom category |
+| **The Whitney** | thewhitneyonredpath.com/apartments + /skyline-view-collection | Playwright — Elementor card grid across two pages, merged into single result set |
+| **The Hampton** | thehampton.ca/floorplans | WordPress REST API — `GET /wp-json/wp/v2/project?per_page=100` returns all floor plan posts as structured JSON |
+| **E18HTEEN** | myrental.ca/apartments-for-rent/18-erskine-ave | Rentsync unit-table-builder API (propertyId: 33874, siteKey: kg_rebuild) — no browser required |
+| **Corner on Broadway** | thecornerrentals.com/suites | BeautifulSoup — parses a clean HTML `<table>` containing all floor plan rows |
+| **Akoya Living** | akoyaliving.ca/suites | Rentsync unit-table-builder API (propertyId: 303333) — direct httpx call |
+| **The Montgomery** | themontgomery.ca/floorplans | Playwright with stealth configuration — see Known Issues |
+
+---
+
+## Dashboard Features
+
+- **Overview cards** — all 10 buildings at a glance with unit counts by bedroom type, rent range, incentive badge, and last-scraped timestamp
+- **Per-building refresh** — `↻` button on each card triggers a single-building scrape without re-running all 10
+- **Unit type filter** — filter across all buildings simultaneously by Bachelor / 1-Bed / 2-Bed / 3-Bed
+- **Building detail view** — full unit table per building with floor plan name, unit number, sqft, bathrooms, monthly rent, availability date, and incentives
+- **PDF export** — formatted competitive report with building summary table and per-unit breakdowns grouped by bedroom count, generated server-side with ReportLab
+- **JWT authentication** — login-gated dashboard; all routes require a valid session cookie
+
+---
+
+## Project Structure
+
+```
+fitzroviacasestudy/
+├── app.py                    # FastAPI routes, auth middleware, scrape triggers, Jinja2 rendering
+├── auth.py                   # JWT generation + bcrypt compatibility patch for passlib
+├── database.py               # SQLAlchemy models: Building, UnitListing, ScrapeRun
+├── pdf_export.py             # ReportLab PDF generation — tables, section headers, footer
+├── run_scraper.py            # CLI entry point for running individual scrapers
+├── requirements.txt          # Pinned Python dependencies
+├── Dockerfile                # Playwright-capable Docker image (mcr.microsoft.com base)
+├── fitzrovia.db              # SQLite database
+│
+├── scraper/
+│   ├── base.py               # BaseScraper — Playwright setup, stealth, incentive fetch, DB write
+│   ├── runner.py             # Async orchestrator with asyncio.Semaphore (max 3 concurrent)
+│   └── buildings/
+│       ├── __init__.py       # Safe dynamic imports — one broken scraper won't disable others
+│       ├── parker.py
+│       ├── story_midtown.py
+│       ├── selby.py
+│       ├── ecentral.py
+│       ├── montgomery.py
+│       ├── whitney.py
+│       ├── hampton.py
+│       ├── e18hteen.py
+│       ├── corner_broadway.py
+│       └── akoya.py
+│
+└── templates/
+    ├── base.html             # Shared layout, nav, fonts, CSS variables
+    ├── dashboard.html        # Building cards, filters, refresh logic, status polling
+    ├── building_detail.html  # Per-building unit table with sorting
+    └── login.html            # JWT login form
+```
+
+---
+
+## Running Locally
+
+### Prerequisites
+
+- Python 3.11 (via Conda or venv)
+- Git
+
+### Setup
+
+```bash
+git clone https://github.com/aathushankugendran/fitzroviacasestudy.git
+cd fitzroviacasestudy
+
+# Create environment
+conda create -n fitzrovia python=3.11
+conda activate fitzrovia
+
+# Install dependencies
+pip install -r requirements.txt
+playwright install chromium
+
+# Start the server
+uvicorn app:app --reload
+```
+
+Visit `http://127.0.0.1:8000`
+
+```
+Username: admin
+Password: fitzrovia2024
+```
+
+### Running Individual Scrapers via CLI
+
+```bash
+python run_scraper.py --building "Parker"
+python run_scraper.py --building "Story of Midtown"
+python run_scraper.py --building "The Selby"
+python run_scraper.py --building "eCentral"
+python run_scraper.py --building "The Whitney"
+python run_scraper.py --building "The Hampton"
+python run_scraper.py --building "E18HTEEN"
+python run_scraper.py --building "Corner on Broadway"
+python run_scraper.py --building "Akoya Living"
+python run_scraper.py --building "The Montgomery"
+```
+
+---
+
+## Deployment
+
+The platform runs on **Railway** using a Docker image built from Microsoft's official Playwright Python base, which bundles all Chromium system dependencies.
+
+```dockerfile
+FROM mcr.microsoft.com/playwright/python:v1.47.0-jammy
+
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install -r requirements.txt
+COPY . .
+RUN playwright install chromium
+
+EXPOSE 8080
+CMD ["sh", "-c", "uvicorn app:app --host 0.0.0.0 --port ${PORT:-8080}"]
+```
+
+Railway injects `PORT` at runtime. Deployments trigger automatically on every push to `main`.
+
+---
+
+## API Reference
+
+| Method | Route | Auth | Description |
+|---|---|---|---|
+| `GET` | `/` | ✅ | Dashboard overview |
+| `GET` | `/login` | — | Login page |
+| `POST` | `/login` | — | Authenticate, issue JWT cookie |
+| `GET` | `/logout` | — | Clear session |
+| `GET` | `/buildings/{id}` | ✅ | Building detail view |
+| `POST` | `/scrape` | ✅ | Trigger full scrape (all 10 buildings) |
+| `POST` | `/scrape/building/{id}` | ✅ | Trigger single-building scrape |
+| `GET` | `/scrape/status` | ✅ | Poll whether a scrape is currently running |
+| `GET` | `/export/pdf` | ✅ | Generate and download the PDF report |
+
+---
+
+## Database Schema
+
+### `buildings`
+Seeded at startup. One row per tracked property.
+
+| Column | Type | Description |
+|---|---|---|
+| `id` | INTEGER | Primary key |
+| `name` | TEXT | Building name |
+| `address` | TEXT | Street address |
+| `url` | TEXT | Source URL for scraping |
+| `last_scraped_at` | DATETIME | Timestamp of most recent successful scrape |
+| `scrape_status` | TEXT | `success`, `empty`, or `error` |
+| `incentives` | TEXT | Latest incentive text extracted from homepage |
+
+### `unit_listings`
+One row per available unit per scrape run.
+
+| Column | Type | Description |
+|---|---|---|
+| `id` | INTEGER | Primary key |
+| `building_id` | INTEGER | FK → buildings |
+| `unit_number` | TEXT | Unit identifier (e.g. `2303`) |
+| `unit_type` | TEXT | `Bachelor`, `1-Bed`, `2-Bed`, `3-Bed` |
+| `bedrooms` | INTEGER | Bedroom count |
+| `bathrooms` | FLOAT | Bathroom count |
+| `floor_plan_name` | TEXT | Floor plan label (e.g. `Oriole`) |
+| `sq_ft` | INTEGER | Square footage |
+| `floor` | INTEGER | Floor number (where available) |
+| `monthly_rent` | FLOAT | Listed monthly rent |
+| `rent_min` / `rent_max` | FLOAT | Range where provided |
+| `available_date` | TEXT | Availability date or `Available Now` |
+| `incentives` | TEXT | Unit-level incentive (if separate from building) |
+| `source_url` | TEXT | Direct URL of the scraped page |
+
+### `scrape_runs`
+Audit log of every scrape trigger.
+
+| Column | Type | Description |
+|---|---|---|
+| `id` | INTEGER | Primary key |
+| `started_at` | DATETIME | Scrape start time |
+| `completed_at` | DATETIME | Scrape end time |
+| `status` | TEXT | `running`, `complete`, `error` |
+| `buildings_scraped` | INTEGER | Count of buildings attempted |
+| `units_found` | INTEGER | Total units saved |
+| `errors` | TEXT | Semicolon-separated error messages |
 
 ---
 
@@ -72,131 +302,28 @@ Incentives are scraped dynamically on every run — the base class visits each b
 
 ### The Montgomery — Cloudflare Bot Protection
 
-The Montgomery's site (RentCafe/Yardi CMS) is protected by **Cloudflare Turnstile** bot detection. When headless Playwright visits the page, Cloudflare intercepts and serves a security challenge page instead of real content.
+The Montgomery's site (RentCafe/Yardi CMS) is protected by Cloudflare Turnstile. Railway operates from an AWS data center IP which Cloudflare identifies as a non-residential origin and serves a JS challenge page instead of real content.
 
-The data structure was fully confirmed using the Claude MCP Chrome extension — each floor plan detail page (`/floorplans/oriole`, `/floorplans/maxwell`, etc.) contains individual apartment cards with unit number, availability date, and price in server-rendered HTML. For example:
+The data structure is fully confirmed — each floor plan detail page (`/floorplans/oriole`, `/floorplans/maxwell`, etc.) contains server-rendered apartment cards with unit number, availability date, and price. The HTML parsing logic is correct and verified. The sole blocker is Cloudflare detecting the headless browser fingerprint at the network level.
 
-```
-Apartment: # 2303
-Date Available: 10/06/2026
-Starting at: $2,435/Month
+Approaches tested: stealth JS injection, browser session warming via pre-navigation, `page.evaluate(fetch())` with Cloudflare session cookies, direct RentCafe API calls, and various httpx header configurations. All blocked.
 
-Apartment: # 1603
-Date Available: 10/07/2026
-Starting at: $2,400/Month
-```
+**Production fix:** A residential proxy service (Bright Data, Oxylabs) or the `undetected-playwright` library would bypass Cloudflare's IP-based fingerprinting.
 
-The scraper logic is correct and the data is confirmed live. The sole blocker is Cloudflare detecting the headless browser fingerprint. Several bypass approaches were explored including stealth JS injection, homepage session warming, and using `page.evaluate(fetch())` from an already-authenticated browser context — all blocked.
+### Safe Module Imports
 
-**To fix in a future iteration:** A residential proxy or `undetected-playwright` library would bypass Cloudflare's fingerprinting.
-
-### E18HTEEN — Filter Timing Issue
-
-The E18HTEEN scraper at `myrental.ca/apartments-for-rent/18-erskine-ave` uses a radio button filter system. The scraper correctly identifies that clicking the **parent label element** (`.input-radio__label:has(input[data-value="X"])`) is required — not the input itself — because the site's JavaScript listens on the label, not the input. All 7 floor plans were confirmed live via the Chrome MCP:
-
-- Addison, Abbington, Elgin (1-Bed)
-- Grammercy (1-Bed + Den)
-- Bedford, Bennington (2-Bed)
-- Chaplin (2-Bed + Den)
-
-The filter interaction works locally in some runs but DOM update timing in headless Playwright is inconsistent. On Railway the scraper cannot run at all since Chromium binaries are not installed.
-
-**To fix:** Adding explicit `wait_for_selector` calls after each filter click would stabilise timing.
+`scraper/buildings/__init__.py` uses `importlib.import_module` inside try/except blocks for each scraper. This ensures that a syntax error or import-time crash in any one scraper file does not prevent the remaining 9 from loading, since all scrapers share a single Python module namespace. Each failure is logged individually with the full exception.
 
 ---
 
-## Why the Hosted Version Has No Data
+## Credentials
 
-The hosted version on Railway is a **read-only dashboard**. Playwright requires a full Chromium browser installation (~300MB of binaries) which is not included in the Railway deployment to keep the build within free tier limits. As a result, the "Refresh Data" button is disabled on the hosted version.
-
-The hosted link reflects whatever data was in the SQLite database at the time of the last `git push`. To update the live dashboard with fresh data:
-
-1. Run scrapers locally and let them populate the database
-2. Push the updated `rental_data.db` to GitHub
-3. Railway redeploys automatically with the new data
-
-**If running locally, the platform runs seamlessly end-to-end** — all scrapers execute, data populates in real time, and the dashboard reflects live listings within seconds of triggering a scrape from the UI.
+| Field | Value |
+|---|---|
+| Dashboard login | `admin` / `fitzrovia2024` |
+| Live URL | `https://web-production-10bb7.up.railway.app` |
+| Auth mechanism | JWT (HS256), 8-hour expiry, stored in `HttpOnly` cookie |
 
 ---
 
-## A Note on the Development Process
-
-This project was built collaboratively with **Claude (Anthropic)** as an AI development partner. Claude assisted with:
-
-- Architecting the scraper base class and runner
-- Identifying the correct API endpoints and selectors by inspecting live sites through the Chrome MCP
-- Debugging bot detection issues (Cloudflare, RentCafe session cookies)
-- Building the dashboard UI and PDF export
-- Deploying to Railway and resolving bcrypt/Python version compatibility issues
-
-Due to Claude's credit limits and a **5-hour cooldown between sessions**, and with **final exams approaching**, I was unable to bring every component to full completion. Each credit reset required re-explaining context and picking up where I left off, which slowed iteration significantly. Despite this, I'm proud of the technical depth achieved:
-
-- 8 of 10 buildings scraping accurately with real unit-level data
-- Live incentive detection with zero hardcoding
-- Full JWT authentication
-- PDF export
-- Responsive dashboard with per-building detail views
-- Working deployment on Railway
-
-This was my best work given the time and resource constraints, and represents a genuine attempt to build something production-grade rather than a surface-level prototype.
-
----
-
-## Running Locally
-
-```bash
-# Setup
-conda activate fitzrovia
-cd fitzrovia-scraper
-pip install -r requirements.txt
-playwright install chromium
-
-# Start the server
-uvicorn app:app --reload
-
-# Visit
-open http://127.0.0.1:8000
-# Login: admin / fitzrovia2024
-```
-
-To run a single building scraper from the CLI:
-```bash
-python run_scraper.py --building "Parker"
-python run_scraper.py --building "The Selby"
-python run_scraper.py --building "Akoya Living"
-# etc.
-```
-
----
-
-## Project Structure
-
-```
-fitzrovia-scraper/
-├── app.py                  # FastAPI app, routes, Jinja2 templates
-├── auth.py                 # JWT + bcrypt authentication
-├── database.py             # SQLAlchemy models (Building, UnitListing, ScrapeRun)
-├── run_scraper.py          # CLI for running individual scrapers
-├── requirements.txt        # Python dependencies
-├── rental_data.db          # SQLite database (committed with pre-scraped data)
-├── scraper/
-│   ├── base.py             # BaseScraper class, shared helpers, incentive scraping
-│   ├── runner.py           # Async orchestrator (runs all scrapers concurrently)
-│   └── buildings/
-│       ├── parker.py
-│       ├── story_midtown.py
-│       ├── selby.py
-│       ├── ecentral.py
-│       ├── montgomery.py   # ⚠ Blocked by Cloudflare Turnstile
-│       ├── whitney.py
-│       ├── hampton.py
-│       ├── e18hteen.py     # ⚠ Filter timing inconsistency in headless mode
-│       ├── corner_broadway.py
-│       └── akoya.py
-├── templates/
-│   ├── base.html
-│   ├── dashboard.html
-│   ├── building_detail.html
-│   └── login.html
-└── static/
-```
+*Fitzrovia Real Estate — Internal Use Only*
